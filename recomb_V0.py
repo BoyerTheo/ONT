@@ -193,7 +193,6 @@ expected_length = len(expected)
 
 refname = args.reference.split('/')[-1].split('.')[0]
 w = open(args.output, 'a+')
-
 if args.mode == 'raw':
     w.write(refname + "\t" + str(common_length) + "/" + str(expected_length) + "\n")
 if args.mode == 'min' or args.mode == 'maj':
@@ -211,8 +210,8 @@ if args.mode == 'recomb':
     x=open(f"{PurePath(args.output).parent}/{Path(args.target).stem}_variant.tsv","w")
     for nb in range(len(tvar)):
         if re.search("MN908947|WG",tvar[nb][0]):
-            x.write(f"{tvar[nb][0]},{tvar[nb][1]},{tvar[nb][2]},{tvar[nb][3]},{tvar[nb][3]}\t")
-    x.close
+            x.write(f"{tvar[nb][0]},{tvar[nb][1]},{tvar[nb][2]},{tvar[nb][3]},{tvar[nb][4]}\t")
+    x.close()
 w.close()
 
 # REF="/srv/scratch/iai/seqmet/db/ref/ncov/MN908947"

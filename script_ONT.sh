@@ -13,19 +13,18 @@
 #9 : c'est encore complique pour les fichiers de sorties (il y en a un peu partout) et il manque deux etapes pour obtenir le fichier de validation 
 
 CURRENT_DIR="/srv/scratch/ONT"
-RUN_NAME="gridion20220316" #changer nom du run (doit correspondre au dossier)
+RUN_NAME="Grid20220415" #changer nom du run (doit correspondre au dossier)
 DEMUX_FOLDER="/demultiplex_folder"
 FOLDER="/srv/scratch/ONT/${RUN_NAME}" 
 SCRIPT_SEQMET="/srv/scratch/iai/seqmet/script"
 SCRIPT_ONT="/srv/scratch/ONT/script"
 SINGU_SEQMET="/srv/scratch/iai/seqmet/singularity"
 SINGU_ONT="/srv/scratch/ONT/singularity"
-MATRICE="/srv/scratch/iai/seqmet/db/ref/ncov/MN908947"
-SAMPLESHEET="${FOLDER}/gridion20220316.csv" #mettre le csv dans le dossier du run et changer le nom du csv
+SAMPLESHEET="${FOLDER}/Grid20220415.csv" #mettre le csv dans le dossier du run et changer le nom du csv
 NGS_VIRO="/srv/nfs/ngs-stockage/NGS_Virologie"
 REF="/srv/scratch/iai/seqmet/db/ref/ncov/MN908947"
 MODEL="r941_min_sup_variant_g507" #r104_e81_sup_g5015  r941_min_sup_variant_g507
-KIT_ID="SQK-RBK110-96" #SQK-NBD112-24 SQK-RBK110-96  SQK-PBK004
+KIT_ID="SQK-PBK004" #SQK-NBD112-24 SQK-RBK110-96  SQK-PBK004
 
 #arborescence dossier :
 # medaka_rerun
@@ -49,6 +48,7 @@ if [ ! -d $FOLDER/tmp ]; then
     mkdir -p $FOLDER/fastq_filtered
     mkdir -p $FOLDER/conta
     mkdir -p $FOLDER/newval
+    mkdir -p $FOLDER/recomb
 fi
 
 echo "Formatage Nom"
@@ -95,16 +95,18 @@ do
         num=$(echo $x | awk -F 'BC|NC' '{print $2}' | awk -F '-' '{print $1}')
         if [[ $KIT_ID == "SQK-RBK110-96" ]];
         then
+            echo "rapide_barcoding : running with min_length=150, max_length=1400"
             singularity exec $SINGU_ONT/artic_qc.sif artic guppyplex --min-length 150 --max-length 1400 --directory $FOLDER/fastq_filtered/barcode${num} --output $FOLDER/guppyfastq/${x}.fastq
         else 
+            echo "ligation : running with min_length=1000, max_length=1600"
             singularity exec $SINGU_ONT/artic_qc.sif artic guppyplex --min-length 1000 --max-length 1600 --directory $FOLDER/fastq_filtered/barcode${num} --output $FOLDER/guppyfastq/${x}.fastq
         fi
     fi
-    #Mapping lectures sur génome de ref + virer les amplicons
+    #Mapping lectures sur génome de ref + virer les amorces d'amplicons
     if [ ! -e $FOLDER/bam_files/${x}_depth.tsv ]; 
     then
-        singularity exec $SINGU_ONT/medaka-1.5.0.sif minimap2 -ax sr "$REF/MN908947.fna" "$FOLDER/guppyfastq/${x}.fastq" | samtools view --threads 1 -b -F 4 - |  tee "$FOLDER/bam_files/${x}_notrim.bam" | singularity exec $SINGU_SEQMET/samtools-1.13.sif samtools ampliconclip --hard-clip -u -o "$FOLDER/tmp/${x}_hardtrimed_sorted.bam" -b "$CURRENT_DIR/nCoV-2019.primer_2.bed" -         
-        samtools sort "$FOLDER/tmp/${x}_hardtrimed_sorted.bam" -o "$FOLDER/bam_files/${x}_hardtrimed_sorted.bam"
+        singularity exec $SINGU_ONT/medaka-1.5.0.sif minimap2 -ax sr "$REF/MN908947.fna" "$FOLDER/guppyfastq/${x}.fastq" | samtools view --threads 1 -b -F 4 - |  tee "$FOLDER/bam_files/${x}_notrim.bam" | singularity exec $SINGU_SEQMET/samtools-1.13.sif samtools ampliconclip --hard-clip -u -o "$FOLDER/tmp/${x}_hardtrimed.bam" -b "$CURRENT_DIR/nCoV-2019.primer_2.bed" -         
+        samtools sort "$FOLDER/tmp/${x}_hardtrimed.bam" -o "$FOLDER/bam_files/${x}_hardtrimed_sorted.bam"
         samtools index "$FOLDER/bam_files/${x}_hardtrimed_sorted.bam"
         singularity exec $SINGU_SEQMET/varcall-0.0.5.sif bedtools genomecov -ibam "$FOLDER/bam_files/${x}_hardtrimed_sorted.bam" -bga > "$FOLDER/bam_files/${x}_bga_depth.bed"
         samtools depth -aa "$FOLDER/bam_files/${x}_hardtrimed_sorted.bam" -o "$FOLDER/bam_files/${x}_depth.tsv"
@@ -361,7 +363,6 @@ rm -f $FOLDER/all_consensus.fasta
 cat $FOLDER/medaka_output/*/*_final_consensus.fasta >> $FOLDER/all_consensus.fasta                               
 
 echo "Summary"
-#rm -f $FOLDER/all_summary.tsv
 if [ ! -e $FOLDER/all_summary.tsv ];
 then
     for x in ${LST_GLIMS[@]};
@@ -369,27 +370,38 @@ then
         singularity exec $SINGU_SEQMET/varcall-0.0.5.sif /usr/bin/Rscript $SCRIPT_SEQMET/make_summary-0.0.6.R --output "$FOLDER/tmp/${x}_summary.tsv" --runname $RUN_NAME --coverage "$FOLDER/bam_files/${x}.cov" --cons "$FOLDER/medaka_output/${x}/${x}_final_consensus.fasta" --count-table "$FOLDER/freebayes/${x}_varcount.tsv" --conta "$FOLDER/conta/${x}_conta_raw.tsv" --coinf-table "$FOLDER/all_coinf.tsv"
     done
     echo "Merge summary"
-    echo -e 'sample\treference\tmean_depth\tpercCOV\thasdp\t5-10%\t10-20%\t20-50%\tvarcount\tcoinf_maj_match\tcoinf_maj_common\tcoinf_maj_ratio\tcoinf_min_match\tcoinf_min_common\tcoinf_min_ratio\tRUN'> $FOLDER/all_summary.tsv
+    echo -e 'sample\treference\tmean_depth\tpercCOV\thasdp\thasposc\t5-10%\t10-20%\t20-50%\tvarcount\tcoinf_maj_match\tcoinf_maj_common\tcoinf_maj_ratio\tcoinf_min_match\tcoinf_min_common\tcoinf_min_ratio\tRUN'> $FOLDER/all_summary.tsv
     for x in ${LST_GLIMS[@]};
     do
-        cat $FOLDER/tmp/${x}_summary.tsv | awk FNR==2 >> $FOLDER/all_summary.tsv
+        awk -v value="NA\tFAILED" -v row=2 -v col=5 'BEGIN{FS=OFS="\t"} NR==row {$col=value}1' $FOLDER/tmp/${x}_summary.tsv >> $FOLDER/tmp/${x}_new_summary.tsv
+        cat $FOLDER/tmp/${x}_new_summary.tsv | awk FNR==2 >> $FOLDER/all_summary.tsv
     done
 fi
 
 echo "Nextclade"
-rm -f $FOLDER/nextclade_report.tsv 
 if [ ! -e $FOLDER/nextclade_report.tsv ]; then
-    singularity exec $SINGU_SEQMET/nextclade-1.10.2.sif nextclade run --input-dataset /srv/scratch/iai/seqmet/db/nextclade/sars-cov-2_220118/ --include-reference --in-order --input-fasta $FOLDER/all_consensus.fasta --output-tsv $FOLDER/nextclade_report.tsv -d $FOLDER/tmp/
+    singularity exec $SINGU_SEQMET/nextclade-1.11.0.sif nextclade run --input-dataset /srv/scratch/iai/seqmet/db/nextclade/sars-cov-2_220408/ --include-reference --in-order --input-fasta $FOLDER/all_consensus.fasta --output-tsv $FOLDER/nextclade_report.tsv -d $FOLDER/tmp/
 fi
 
 echo "Pangolin"
-rm -f $FOLDER/pangolin_report.csv
 if [ ! -e $FOLDER/pangolin_report.csv ]; then 
-    singularity exec $SINGU_SEQMET/pangolin-3.1.20.sif pangolin $FOLDER/all_consensus.fasta --outfile $FOLDER/'pangolin_report.csv' --tempdir $FOLDER/tmp/
+    singularity exec $SINGU_SEQMET/pangolin-4.0.1.sif pangolin $FOLDER/all_consensus.fasta --outfile $FOLDER/'pangolin_report.csv' --use-assignment-cache --assignment-cache /srv/scratch/iai/seqmet/db/pangolin/usher_assignments-v1.2.133.cache.csv.gz --tempdir $FOLDER/tmp/
 fi
 
 echo "Validation"
-singularity exec $SINGU_SEQMET/varcall-0.0.5.sif python3 $SCRIPT_SEQMET/gen_techval-0.0.7.py --nextcladeversion "(Nextclade v.1.10.2)" --rundate "22020316" --mode "ncov" --outdir "$FOLDER/newval/" --varcount_threshold 13 --dp_threshold 8 --cov_minok 90 --cov_maxneg 5 --summary $FOLDER/all_summary.tsv --nextclade $FOLDER/nextclade_report.tsv --pangolin $FOLDER/pangolin_report.csv --vartable $FOLDER/all_vartable.tsv --expectedmatrix $MATRICE/matricemutlineage_ncov_expected_v2-220124.tsv --likelymatrix $MATRICE/matricemutlineage_ncov_likely_v2-220124.tsv --gff $MATRICE/MN908947.gff3 
+singularity exec $SINGU_SEQMET/varcall-0.0.5.sif python3 $SCRIPT_SEQMET/gen_techval-0.1.0.py --nextcladeversion "(Nextclade v.1.11.0)" --rundate "22020415" --mode "ncov" --outdir "$FOLDER/newval/" --varcount_threshold 13 --dp_threshold 8 --cov_minok 90 --cov_maxneg 5 --summary $FOLDER/all_summary.tsv --nextclade $FOLDER/nextclade_report.tsv --pangolin $FOLDER/pangolin_report.csv --vartable $FOLDER/all_vartable.tsv --expectedmatrix $REF/matricemutlineage_ncov_expected_v1-220404.tsv --likelymatrix $REF/matricemutlineage_ncov_likely_v1-220404.tsv --gff $REF/MN908947.gff3 
+#old=gen_techval-0.0.7.py
+
+echo "Recherche recombinaison"
+for x in ${LST_GLIMS[@]}; 
+do
+    for z in $REF/vcf/*.vcf; 
+    do
+        python3 $SCRIPT_ONT/recomb_V0.py -r ${z} -t "$FOLDER/freebayes/${x}.vcf" -d "$FOLDER/bam_files/${x}_bga_depth.bed" -b "$REF/midnight/MN908947_amplicon.bed" --min_depth 20 --min_freq 0.05 --mode recomb --output "$FOLDER/recomb/${x}_recomb.tsv"
+    done
+    python3 $SCRIPT_ONT/find_recomb.py -r "$FOLDER/recomb/${x}_recomb.tsv" -s "$FOLDER/recomb/${x}_variant.tsv" -d "$FOLDER/bam_files/${x}_depth.tsv" -o "$FOLDER/recomb/${x}";
+done
+
 
 #rm -rf $FOLDER/tmp/*
 
